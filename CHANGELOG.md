@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.2.0 (unreleased)
+- **"checked by ReallyDone" README badge (#14).** `packages/engine/src/badge.ts` turns a verdict into a Shields-compatible `badge.json` plus a static `badge.svg`; `.github/workflows/badge.yml` re-runs the gate on every push to the default branch and publishes both files on a `badge` branch, so a README can show `ready` / `not ready` / `unknown` with a one-line `<img>` snippet. Tested in `badge.test.ts`.
 - **Name: Apex verify** (`apex verify`). It was briefly called ReallyDone while we looked for a name; the repository is `apex-verify`.
 - **Focus.** The repository is now `apex verify` and what measures it. Removed: the agent runner (`apex-agent`), model calibration and shared profiles, the uplift leaderboard scripts and the benchmark harness (`apex-bench`). The research results are kept in `docs/research/`.
 - **Linux sandbox**: bubblewrap, tested in CI (write outside the copy denied, external network denied, localhost allowed). The verdict says which sandbox ran.

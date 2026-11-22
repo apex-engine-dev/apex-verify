@@ -78,6 +78,13 @@ jobs:
 
 It posts one comment that it updates in place, writes the job summary, and fails the job on `not_ready` (set `fail-on: unknown` to be stricter, `never` to only report). Make the job a **required status check** to gate merges. The task is the pull request's title and description.
 
+**Badge.** Add `.github/workflows/badge.yml` (see this repo) to re-run the gate on every push to your default branch and publish `badge.json` / `badge.svg` on a `badge` branch. Then one line in your README shows the latest verdict — `ready` / `not ready` / `unknown`:
+
+```md
+![checked by ReallyDone](https://raw.githubusercontent.com/OWNER/REPO/badge/badge.svg)
+<!-- or via Shields' endpoint support: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OWNER/REPO/badge/badge.json -->
+```
+
 **Fork pull requests.** GitHub withholds secrets from forks, so there Apex verify runs without a model: your tests and the cheating scan only, verdict at most `unknown`. Do **not** switch the trigger to `pull_request_target` to get secrets: that runs untrusted code with your secrets. If you want model checks on forks, run a separate privileged job that only posts the result and never executes the pull request's code.
 
 Open-source maintainers: this is aimed at you. A PR that arrives with deleted or skipped tests, or whose behaviour does not match its description, is flagged before you spend review time.

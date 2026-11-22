@@ -16,3 +16,4 @@ export * from "./mechanical.js";
 export * from "./surgical.js";
 export * from "./proof-gate.js";
 export * from "./verified.js";
+export * from "./badge.js";

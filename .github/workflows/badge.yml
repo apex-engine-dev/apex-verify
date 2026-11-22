@@ -1,0 +1,63 @@
+# "checked by ReallyDone" README badge (issue #14): every push to the default
+# branch re-runs the gate and republishes badge.json + badge.svg on the `badge`
+# branch, so READMEs can embed the latest verdict:
+#   ![checked by ReallyDone](https://raw.githubusercontent.com/OWNER/REPO/badge/badge.svg)
+#   https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OWNER/REPO/badge/badge.json
+name: Badge
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: badge
+  cancel-in-progress: false
+
+jobs:
+  badge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # The same gate as on pull requests; the badge never fails the build.
+      - name: Verify the default branch
+        id: verify
+        uses: ./
+        with:
+          api-key: ${{ secrets.GEMINI_API_KEY }}
+          fail-on: never
+          comment: false
+
+      - name: Check out the badge branch (create it on first run)
+        run: |
+          set -e
+          URL="https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          if git ls-remote --exit-code --heads "$URL" badge >/dev/null 2>&1; then
+            git clone --depth 1 --branch badge "$URL" .badge
+          else
+            mkdir .badge
+            cd .badge
+            git init -q
+            git checkout -q --orphan badge
+            git remote add origin "$URL"
+            cd ..
+          fi
+
+      - name: Write the badge from the verdict
+        run: node packages/engine/dist/badge.js "${{ steps.verify.outputs.verdict }}" .badge
+
+      - name: Publish the badge branch
+        run: |
+          set -e
+          cd .badge
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add badge.json badge.svg
+          git commit -qm "badge: ${{ steps.verify.outputs.verdict }} (${{ github.sha }})" || echo "badge unchanged"
+          git push origin HEAD:badge

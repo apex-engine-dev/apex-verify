@@ -65,6 +65,22 @@ Honest limits: these are small projects, the changes were written by Gemini mode
 
 Copy-paste configs: [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md). Exactly what is and is not tested: [docs/USE-CASES.md](docs/USE-CASES.md).
 
+### The "checked by ReallyDone" badge
+
+This repo publishes its latest verdict as a badge on a `badge` branch: every push to the default branch re-runs the gate and republishes `badge.json` (Shields endpoint format) and `badge.svg` (`.github/workflows/badge.yml`). Add the same workflow to your project and paste **one line** into your README:
+
+```md
+![checked by ReallyDone](https://raw.githubusercontent.com/OWNER/REPO/badge/badge.svg)
+```
+
+or let Shields render the JSON live:
+
+```md
+![checked by ReallyDone](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OWNER/REPO/badge/badge.json)
+```
+
+The badge shows `ready` (green), `not ready` (red) or `unknown` (grey) — the verdict of the latest run on the default branch. Replace `OWNER/REPO` with your repository; the `badge` branch is created automatically on the first run.
+
 ## How it decides
 
 1. **Builds the change on a copy** (your git working copy, a branch, or a diff file). Your project is never touched.
