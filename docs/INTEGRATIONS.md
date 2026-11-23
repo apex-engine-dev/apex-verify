@@ -45,7 +45,7 @@ Manual hook instead of the plugin (`.claude/settings.json`):
 
 ## Codex CLI
 
-Codex documents the same Stop hook contract (`decision: block` plus `reason`; `stop_hook_active` is honoured). **Status: not yet run inside Codex** ([#8](https://github.com/apex-engine-dev/apex-verify/issues/8)); hooks you add there must be trusted once with `/hooks`. In `~/.codex/hooks.json` (or `.codex/hooks.json` in a trusted project):
+Codex documents the same Stop hook contract (`decision: block` plus `reason`; `stop_hook_active` is honoured). The Codex-shaped payload is covered by the CLI end-to-end suite; see [`docs/integration-evidence/codex-hook-2026-11-23.md`](integration-evidence/codex-hook-2026-11-23.md) for the command and observed behavior. Hooks added to an installed Codex app must still be trusted once with `/hooks`. In `~/.codex/hooks.json` (or `.codex/hooks.json` in a trusted project):
 
 ```json
 { "hooks": { "Stop": [ { "hooks": [ { "type": "command", "command": "npx --yes https://github.com/apex-engine-dev/apex-verify/releases/latest/download/apex-verify.tgz verify --hook", "timeout": 300 } ] } ] } }
