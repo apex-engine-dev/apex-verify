@@ -1,7 +1,7 @@
 {
   "name": "apex-verify",
   "private": true,
-  "version": "0.3.2",
+  "version": "0.3.3",
   "license": "Apache-2.0",
   "type": "module",
   "description": "Apex verify: proof that an AI's change is really done. Any agent's change in, ready / not ready out, with proof.",

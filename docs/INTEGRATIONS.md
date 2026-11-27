@@ -37,10 +37,10 @@ Set `GEMINI_API_KEY` (or `OPENAI_API_KEY` and `APEX_CHECKER_MODEL`) in the envir
 
 `APEX_MODE=warn` never blocks. Nothing runs when nothing changed, and an unchanged change is not verified twice. The plugin also gives Claude a `verify_change` tool so it can check itself mid-task, and a skill that tells it to.
 
-Manual hook instead of the plugin (`.claude/settings.json`). Hooks run on every stop, so these snippets and the plugin are **pinned to a release** (`v0.3.2`): a mutable `latest` URL would let a future release change what runs inside your agent. Bump the version when you upgrade:
+Manual hook instead of the plugin (`.claude/settings.json`). Hooks run on every stop, so these snippets and the plugin are **pinned to a release** (`v0.3.3`): a mutable `latest` URL would let a future release change what runs inside your agent. Bump the version when you upgrade:
 
 ```json
-{ "hooks": { "Stop": [ { "hooks": [ { "type": "command", "command": "npx --yes https://github.com/apex-engine-dev/apex-verify/releases/download/v0.3.2/apex-verify.tgz verify --hook", "timeout": 300 } ] } ] } }
+{ "hooks": { "Stop": [ { "hooks": [ { "type": "command", "command": "npx --yes https://github.com/apex-engine-dev/apex-verify/releases/download/v0.3.3/apex-verify.tgz verify --hook", "timeout": 300 } ] } ] } }
 ```
 
 ## Codex CLI
@@ -48,7 +48,7 @@ Manual hook instead of the plugin (`.claude/settings.json`). Hooks run on every 
 Codex documents the same Stop hook contract (`decision: block` plus `reason`; `stop_hook_active` is honoured). **Status: not yet run inside Codex**; hooks you add there must be trusted once with `/hooks`. What the test suite covers, and what it does not: [docs/integration-evidence/codex-hook-2026-11-23.md](integration-evidence/codex-hook-2026-11-23.md). In `~/.codex/hooks.json` (or `.codex/hooks.json` in a trusted project):
 
 ```json
-{ "hooks": { "Stop": [ { "hooks": [ { "type": "command", "command": "npx --yes https://github.com/apex-engine-dev/apex-verify/releases/download/v0.3.2/apex-verify.tgz verify --hook", "timeout": 300 } ] } ] } }
+{ "hooks": { "Stop": [ { "hooks": [ { "type": "command", "command": "npx --yes https://github.com/apex-engine-dev/apex-verify/releases/download/v0.3.3/apex-verify.tgz verify --hook", "timeout": 300 } ] } ] } }
 ```
 
 MCP tool: `codex mcp add apex -- npx --yes https://github.com/apex-engine-dev/apex-verify/releases/latest/download/apex-verify.tgz verify --mcp`
@@ -59,7 +59,7 @@ In `.gemini/settings.json` (project) or `~/.gemini/settings.json`:
 
 ```json
 { "hooksConfig": { "enabled": true },
-  "hooks": { "AfterAgent": [ { "hooks": [ { "type": "command", "command": "npx --yes https://github.com/apex-engine-dev/apex-verify/releases/download/v0.3.2/apex-verify.tgz verify --hook", "timeout": 300000 } ] } ] } }
+  "hooks": { "AfterAgent": [ { "hooks": [ { "type": "command", "command": "npx --yes https://github.com/apex-engine-dev/apex-verify/releases/download/v0.3.3/apex-verify.tgz verify --hook", "timeout": 300000 } ] } ] } }
 ```
 
 Gemini sends the request as `prompt` and treats `decision: "block"` as a retry, so it works like the Claude Code hook. Tested with Gemini CLI 0.32.1: a wrong `slugify` was blocked with the failing check, the agent fixed it and finished; a correct change got `READY`. (Gemini asks you to trust project-level hooks the first time.)
@@ -69,7 +69,7 @@ Gemini sends the request as `prompt` and treats `decision: "block"` as a retry, 
 In `.cursor/hooks.json` (project) or `~/.cursor/hooks.json`:
 
 ```json
-{ "version": 1, "hooks": { "stop": [ { "command": "npx --yes https://github.com/apex-engine-dev/apex-verify/releases/download/v0.3.2/apex-verify.tgz verify --hook", "timeout": 300, "loop_limit": 3 } ] } }
+{ "version": 1, "hooks": { "stop": [ { "command": "npx --yes https://github.com/apex-engine-dev/apex-verify/releases/download/v0.3.3/apex-verify.tgz verify --hook", "timeout": 300, "loop_limit": 3 } ] } }
 ```
 
 Cursor sends `workspace_roots`, `conversation_id` and `status` (not `cwd`) and continues the agent when the hook prints `followup_message`; Apex verify detects that input and prints both `followup_message` and `decision: block`. An aborted or errored run is not verified. **Status: written to Cursor's documented hook format and tested with that input shape, but not yet run inside the Cursor app**; Cursor's own forum reports stop-hook follow-ups being unreliable in some versions, so please tell us what you see.
@@ -93,13 +93,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+        with: { fetch-depth: 0, persist-credentials: false }
       - uses: apex-engine-dev/apex-verify@v1
         with:
           api-key: ${{ secrets.GEMINI_API_KEY }}
 ```
 
 It posts one comment that it updates in place, writes the job summary, and fails the job on `not_ready` (set `fail-on: unknown` to be stricter, `never` to only report). Make the job a **required status check** to gate merges. The task is the pull request's title and description.
+
+**The pull request's code runs in a sandbox.** On Linux runners the Action installs bubblewrap, so the change's tests and the model-written checks run with no network, no writes outside a scratch copy and no view of the job's processes (so not of the API key). Without a usable sandbox the Action stops instead of running unsandboxed (`require-sandbox: false` allows it). The GitHub token is only given to the step that posts the comment, never to the step that runs the code. `persist-credentials: false` keeps the token out of the checkout too.
+
+**Node version.** The Action keeps your job's Node, so your tests run on the version you use. Set `node-version` only if the runner's Node is older than 20.
 
 **Fork pull requests.** GitHub withholds secrets from forks, so there Apex verify runs without a model: your tests and the cheating scan only, verdict at most `unknown`. Do **not** switch the trigger to `pull_request_target` to get secrets: that runs untrusted code with your secrets. If you want model checks on forks, run a separate privileged job that only posts the result and never executes the pull request's code.
 

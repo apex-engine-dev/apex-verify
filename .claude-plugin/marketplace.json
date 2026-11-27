@@ -11,7 +11,7 @@
       "name": "apex-verify",
       "source": "./integrations/claude-code",
       "description": "Blocks Claude Code from saying done until Apex verify verifies the change: an independent model writes checks from your request, proves they can fail, and runs them with your tests.",
-      "version": "0.3.2",
+      "version": "0.3.3",
       "category": "quality"
     }
   ]

@@ -201,8 +201,11 @@ export async function detectTestRunner(root: string, override?: string): Promise
   try { const pkg = JSON.parse(await fs.readFile(path.join(root, "package.json"), "utf8")); script = String(pkg.scripts?.test ?? ""); declaresDeps = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies }).length > 0; } catch { /* none */ }
   const real = script && !/no test specified/i.test(script);
   const plainNode = /^[ \t]*node\s+--test\b/.test(script);
+  // A plain `node --test [args]` script is run as written (it needs no node_modules): Node's own default patterns find
+  // test/**/*.js, *-test.js and the like, which the *.test.js search below would miss. Shell syntax goes the npm way.
+  if (plainNode && !/[;&|<>`$()'"\\]/.test(script)) return { kind: "node", command: script.trim().split(/\s+/), timeoutSec: 90 };
   // Dependencies must be installed for the script to mean anything; a script that runs node itself in a project that declares none (a zero-dependency library) needs no node_modules.
-  if (real && !plainNode && ((!declaresDeps && /^[ \t]*node\b/.test(script)) || (await exists(path.join(root, "node_modules"))))) return { kind: "npm", command: await packageManagerTest(root), timeoutSec: 180 };
+  if (real && ((!declaresDeps && /^[ \t]*node\b/.test(script)) || (await exists(path.join(root, "node_modules"))))) return { kind: "npm", command: await packageManagerTest(root), timeoutSec: 180 };
   if (await findFile(root, async (name, full) => /\.test\.[mc]?js$/.test(name) && /node:test/.test(await fs.readFile(full, "utf8").catch(() => "")))) {
     return { kind: "node", command: ["node", "--test"], timeoutSec: 90 };
   }

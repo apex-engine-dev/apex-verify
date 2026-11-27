@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.3 (2026-11-27)
+Fixes from an audit of 0.3.2 (verdict logic, security, first-time use).
+- **A flaky check is UNKNOWN, never READY.** In 0.3.2 a check that failed and then passed on a rerun was not counted, so a change that is wrong only some of the time could be READY. Now it is reported as `checks_flaky` and the verdict is UNKNOWN.
+- **Editing how the tests run no longer hides a broken test.** When a change edits the test script, or test settings (package.json jest/vitest/mocha keys, `[tool.pytest]` in pyproject.toml, which the cheat scan now also reads), the original test command is run on both the old and the new code, and any test that passed before and no longer passes is a regression.
+- **Plain `node --test` scripts run as written.** Projects with tests in `test/*.js` (no `.test.` in the file name) were reported as having no tests.
+- **GitHub Action: the pull request's code runs sandboxed, away from the token.** The Action now installs bubblewrap on Linux and refuses to run without a sandbox (`require-sandbox: false` to allow it; `APEX_REQUIRE_SANDBOX=1` does the same for the CLI). The GitHub token moved to a separate step that only posts the result. Before, on GitHub's Linux runners the tests ran unsandboxed in a step that also held the API key and the token, so a same-repository pull request could read them. Fork pull requests were not affected (GitHub gives them no secrets).
+- **GitHub Action keeps your Node.** It no longer switches the job to Node 20; a new `node-version` input sets one when needed.
+
 ## 0.3.2 (2026-11-26)
 - **Flaky checks no longer block.** When a check written from the task fails, it is run once more; if it then passes, it is reported as flaky and not counted. `APEX_RERUN=0` turns this off. (No check was flaky in the benchmark runs below, so this is a safeguard, not a measured gain.)
 - **Opt-in: agreement before blocking** (`APEX_VOTE=1`). When the checks find a problem, two more independent sets are written from the task, and the change is blocked only if most of them fail. On the 200 real-library changes all three sets agreed on 101 of 107 blocks; the vote overturned two blocks, one of them a false alarm, and let no wrong change through. That is too small a gain for two extra model calls on every blocked change, so it is off by default. Write-up: `benchmark/results/real-libraries-experiments`.

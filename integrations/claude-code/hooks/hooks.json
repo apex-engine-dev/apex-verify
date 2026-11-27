@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx --yes https://github.com/apex-engine-dev/apex-verify/releases/download/v0.3.2/apex-verify.tgz verify --hook",
+            "command": "npx --yes https://github.com/apex-engine-dev/apex-verify/releases/download/v0.3.3/apex-verify.tgz verify --hook",
             "timeout": 300
           }
         ]

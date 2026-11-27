@@ -45,6 +45,14 @@ inputs:
     description: On pushes (not pull requests), publish a badge file with the verdict to the apex-badge branch, for a shields.io endpoint badge (see docs/INTEGRATIONS.md). Needs "contents write" permission and a public repository.
     required: false
     default: "false"
+  node-version:
+    description: Node.js version to install for the job (for example "22"). Empty (the default) keeps the runner's own Node, so your project's tests run on the Node your job already uses; Apex verify itself needs Node 20 or newer.
+    required: false
+    default: ""
+  require-sandbox:
+    description: Refuse to run the change's code and the model-written checks without a test sandbox (on Linux the Action installs bubblewrap for it). "false" allows an unsandboxed run, which lets code in the pull request read anything the job can.
+    required: false
+    default: "true"
 outputs:
   verdict:
     description: ready, not_ready or unknown.
@@ -55,9 +63,30 @@ outputs:
 runs:
   using: composite
   steps:
-    - uses: actions/setup-node@v4
+    # Only when asked: setup-node changes Node for the rest of the job, and a project that needs Node 22 must keep it.
+    - if: inputs.node-version != ''
+      uses: actions/setup-node@v4
       with:
-        node-version: "20"
+        node-version: ${{ inputs.node-version }}
+    - name: Check Node and set up the test sandbox
+      shell: bash
+      env:
+        REQUIRE_SANDBOX: ${{ inputs.require-sandbox }}
+      run: |
+        set -uo pipefail
+        MAJOR=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
+        if [ "$MAJOR" -lt 20 ]; then echo "::error title=Apex verify::Node 20 or newer is needed (found $(node --version 2>/dev/null || echo none)). Set the node-version input, or add actions/setup-node before this step."; exit 1; fi
+        # The change's tests and the checks a model wrote run in bubblewrap on Linux: no network, no writes outside a scratch copy,
+        # and no view of this job's processes (so not of the API key or the token either). Ubuntu 24.04 blocks the user namespaces it needs by default.
+        if [ "$RUNNER_OS" = "Linux" ]; then
+          if ! command -v bwrap >/dev/null 2>&1; then
+            (sudo -n apt-get install -y -qq bubblewrap >/dev/null 2>&1 || { sudo -n apt-get update -qq >/dev/null 2>&1 && sudo -n apt-get install -y -qq bubblewrap >/dev/null 2>&1; }) || true
+          fi
+          sudo -n sysctl -q -w kernel.apparmor_restrict_unprivileged_userns=0 >/dev/null 2>&1 || true
+          if bwrap --ro-bind / / --dev /dev --unshare-net --unshare-pid true >/dev/null 2>&1; then echo "Test sandbox: Linux bubblewrap."
+          elif [ "$REQUIRE_SANDBOX" = "true" ]; then echo "::error title=Apex verify::No usable test sandbox (bubblewrap could not be installed or started). Install bubblewrap and allow unprivileged user namespaces on this runner, or set require-sandbox: false to run without one."
+          else echo "::warning title=Apex verify::Running without a test sandbox: code in the pull request can read anything this job can."; fi
+        fi
     - name: Install Apex verify
       id: install
       shell: bash
@@ -116,8 +145,8 @@ runs:
         PR_BODY: ${{ github.event.pull_request.body }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
         PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        GH_TOKEN: ${{ github.token }}
-        REPO: ${{ github.repository }}
+        REQUIRE_SANDBOX: ${{ inputs.require-sandbox }}
+        # No GitHub token in this step: it runs the pull request's code. Commenting and the badge happen in the next step.
       run: |
         set +e   # GitHub starts steps with -e; the exit code is handled below
         set -uo pipefail
@@ -139,13 +168,30 @@ runs:
           ARGS+=(--no-model)
           echo "::notice title=Apex verify::No API key (or a fork pull request): running the tests and the cheating scan only, so the verdict is at most unknown."
         else export APEX_CHECKER_KEY="$INPUT_KEY"; fi
+        [ "$REQUIRE_SANDBOX" = "true" ] && export APEX_REQUIRE_SANDBOX=1
         node "$APEX_BIN" "${ARGS[@]}" | tee "$OUT/report.txt"
         CODE=${PIPESTATUS[0]}
         VERDICT=$(node -e 'try{console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).verdict)}catch{console.log("error")}' "$OUT/report.json")
         # No report means no verification happened (a crash, or arguments that never reached verify): that is an error, whatever the exit code said.
         if [ "$VERDICT" = "error" ] && [ "$CODE" -ne 2 ]; then CODE=2; fi
-        echo "verdict=$VERDICT" >> "$GITHUB_OUTPUT"; echo "report=$OUT/report.json" >> "$GITHUB_OUTPUT"
+        echo "verdict=$VERDICT" >> "$GITHUB_OUTPUT"; echo "report=$OUT/report.json" >> "$GITHUB_OUTPUT"; echo "code=$CODE" >> "$GITHUB_OUTPUT"
         [ -f "$OUT/report.md" ] && cat "$OUT/report.md" >> "$GITHUB_STEP_SUMMARY"
+        exit 0
+    - name: Post the result
+      shell: bash
+      env:
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_COMMENT: ${{ inputs.comment }}
+        INPUT_BADGE: ${{ inputs.badge }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        VERDICT: ${{ steps.run.outputs.verdict }}
+        CODE: ${{ steps.run.outputs.code }}
+        GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.repository }}
+      run: |
+        set +e
+        set -uo pipefail
+        OUT="$RUNNER_TEMP/apex"; CODE="${CODE:-2}"
         if [ "$INPUT_COMMENT" = "true" ] && [ -n "${PR_NUMBER:-}" ] && [ -f "$OUT/report.md" ]; then
           ID=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate --jq '[.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<!-- apex-verify -->")))][0].id // empty' 2>/dev/null || true)
           if [ -n "$ID" ]; then gh api -X PATCH "repos/$REPO/issues/comments/$ID" -F body=@"$OUT/report.md" >/dev/null 2>&1 || echo "::warning::Could not update the Apex verify comment (read-only token on a fork pull request?). The report is in the job summary."

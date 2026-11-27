@@ -39,7 +39,7 @@ async function typecheckRun(tc: { file: string; args: string[] }, dir: string, t
   return runCommand(file, args, { cwd: dir, timeoutMs: timeoutSec * 1000, signal, env: { ...runEnv(), CI: "1", FORCE_COLOR: "0" } }).catch(() => null);
 }
 
-export interface Reason { kind: "regression" | "cheat" | "check_failed" | "checks_suspect" | "checkers_disagree" | "no_checks" | "checks_unproven" | "no_change" | "no_tests" | "tests_outdated"; summary: string; evidence?: string; hint?: string }
+export interface Reason { kind: "regression" | "cheat" | "check_failed" | "checks_flaky" | "checks_suspect" | "checkers_disagree" | "no_checks" | "checks_unproven" | "no_change" | "no_tests" | "tests_outdated"; summary: string; evidence?: string; hint?: string }
 
 export interface VerifyReport {
   schema: 1;
@@ -334,6 +334,8 @@ export async function verify(o: VerifyOptions): Promise<VerifyReport> {
 
     // Without a sandbox the tests can write to the real node_modules (it is linked into the copies, not copied): notice when they did.
     const sandboxed = await testSandboxAvailable().catch(() => false);
+    // APEX_REQUIRE_SANDBOX=1 (the GitHub Action sets it): never run the change's code, or checks a model wrote, without one.
+    if (!sandboxed && process.env.APEX_REQUIRE_SANDBOX === "1") throw new Error("no test sandbox is available here and APEX_REQUIRE_SANDBOX=1 is set, so the change's code and the checks were not run (on Linux install bubblewrap and allow unprivileged user namespaces; see docs/SANDBOX.md)");
     const realNodeModules = path.join(o.dir, "node_modules");
     const nmBefore = sandboxed ? null : await nodeModulesStamp(realNodeModules);
 
@@ -397,6 +399,30 @@ ${reg.evidence ?? ""}`, 1500), hint: "If that is right, update the test to the n
       warnings.push(missingDeps ? "dependencies are not installed (run npm install or your package manager's install), so the project's tests could not run; only the checks written from the task can prove anything" : "no test runner found: only the checks written from the task can prove anything (pass --test \"<command>\" to use your own)");
     }
 
+    // 2a. a change that edits how the tests run (the test script, or the runner's settings) is judged by the ORIGINAL
+    // test command too: every test that passed on the old code must still pass on the new code. Otherwise a change could
+    // drop the one test it broke from the script or the config and pass with only a warning.
+    const testsTouched = report.cheats.some((ch) => (ch.kind === "test_script_changed" || ch.kind === "test_config_changed") && !locked.has(ch.file));
+    if (testsTouched && !reasons.some((r) => r.kind === "regression") && (await baselineIntact())) {
+      const baseRunner: TestRunner | null = await detectTestRunner(c.orig, o.testCommand?.join(" ")).catch(() => null);
+      if (baseRunner) {
+        const t = Math.max(timeout, baseRunner.timeoutSec ?? 0);
+        const before = await runTests(c.orig, baseRunner.command, o.signal, t);
+        const afterBase = await runTests(c.next, baseRunner.command, o.signal, t);
+        const passedNames = (out: string) => new Set(parseTestOutcomes(out).filter((x) => x.ok && !x.skipped).map((x) => x.name));
+        const was = passedNames(before.output), now = passedNames(afterBase.output);
+        const lost = [...was].filter((n) => !now.has(n));
+        const ranAny = afterBase.passed + afterBase.failed > 0;
+        if (lost.length && ranAny) reasons.push({
+          kind: "regression",
+          summary: `the change edits how the tests run, and with the original test command (${baseRunner.command.join(" ")}) ${lost.length} test${lost.length === 1 ? "" : "s"} that passed before ${lost.length === 1 ? "no longer passes" : "no longer pass"}: ${lost.slice(0, 3).join(", ")}`,
+          evidence: trim(afterBase.output.split("\n").filter((l) => /not ok|fail|error|assert/i.test(l)).slice(0, 12).join("\n"), 1500),
+          hint: "Do not change the test script or test settings to leave out a test the change broke. Fix the code, or explain in the task why the test should go.",
+        });
+        else if (lost.length) warnings.push(`the change edits how the tests run, and the original test command (${baseRunner.command.join(" ")}) no longer runs on the new code, so tests that passed before cannot be checked; review the test command change by hand`);
+      }
+    }
+
     // 2b. the project's type check, if it has one: only errors the change introduced count
     const tc = await typecheckCommand(c.next);
     if (tc) {
@@ -442,10 +468,12 @@ ${reg.evidence ?? ""}`, 1500), hint: "If that is right, update the test to the n
           T.failedOnOldCode = draft.original.failed > 0 || !!draft.original.loadError;
           const spec = { path: draft.path, code: draft.code, run: draft.run, py: draft.py, ...(draft.framework ? { framework: draft.framework } : {}) };
           let run = await runAcceptance(c.next, spec, o.signal, timeout);
-          // A check that fails once and passes on a rerun is flaky: it is not evidence either way (APEX_RERUN=0 turns this off).
+          // A check that fails once and passes on a rerun is flaky: not evidence that the change is wrong, and not that it is
+          // right either (a change that is wrong only some of the time looks exactly like this). Never READY on it: UNKNOWN.
+          let flaky = 0;
           if (run.failed > 0 && process.env.APEX_RERUN !== "0") {
             const again = await runAcceptance(c.next, spec, o.signal, timeout);
-            if (again.failed === 0 && !again.loadError && again.passed > 0) { warnings.push(`${run.failed} check${run.failed === 1 ? "" : "s"} failed once and passed on a rerun (flaky), so ${run.failed === 1 ? "it was" : "they were"} not counted`); run = again; }
+            if (again.failed === 0 && !again.loadError && again.passed >= run.passed + run.failed) { flaky = run.failed; run = again; }
           }
           T.passed = run.passed;
           T.failed = run.failed + (run.loadError && run.passed + run.failed === 0 ? 1 : 0);
@@ -462,6 +490,8 @@ ${reg.evidence ?? ""}`, 1500), hint: "If that is right, update the test to the n
             }
             if (blame === "test") push({ kind: "checks_suspect", summary: "a check written from the task fails, but on a second look the check itself looks wrong", evidence: trim(`${why}\n${T.failures}`, 1800), hint: "Review the failing check: it may over-reach. If the change is right, this is a false alarm." });
             else push({ kind: "check_failed", summary: `${T.failed} check${T.failed === 1 ? "" : "s"} written from the task ${T.failed === 1 ? "fails" : "fail"} on the new code`, evidence: trim(T.failures, 1800), hint: "Make the change satisfy the behaviour in the task; the failing check output shows what is expected." });
+          } else if (flaky) {
+            push({ kind: "checks_flaky", summary: `${flaky} check${flaky === 1 ? "" : "s"} written from the task failed on the new code once and passed on a rerun`, hint: "Either the check or the change is not deterministic. A change that is right only some of the time also looks like this, so review it by hand, or run verify again." });
           } else if (!T.failedOnOldCode) {
             push({ kind: "checks_unproven", summary: "the checks pass, but they also pass on the old code, so they cannot show the change did anything", hint: "Describe the behaviour that should differ, or review the change by hand." });
           }

@@ -564,3 +564,48 @@ test("starter issues: token counts reach the report; a missing install is named;
   execFileSync("git", ["-C", f, "add", "-A"]); execFileSync("git", ["-C", f, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "bad"]);
   assert.throws(() => parseVerifyArgs(["--task", "x", "--dir", f, "--no-model"], {}), /unknown setting "apiKey"/);
 });
+
+// ---- 0.3.3: audit fixes ----
+// Windows: the AppContainer sandbox only lets the code write inside its scratch copy, so the marker file cannot be made there.
+test("0.3.3: a check that fails once and passes on a rerun is UNKNOWN (checks_flaky), never READY", { skip: process.platform === "win32" }, async () => {
+  const d = repo();
+  // Wrong on the first call with a space in it only (the project's own tests use none): a marker file in the temp folder (writable inside the sandbox) records it.
+  const mark = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "apex-vt-flaky-")), "seen");
+  write(d, "src/slug.js", `import fs from "node:fs";\nexport function slugify(s) { const ok = String(s).toLowerCase().trim().replace(/\\s+/g, "-"); if (!/ /.test(s) || fs.existsSync(${JSON.stringify(mark)})) return ok; fs.writeFileSync(${JSON.stringify(mark)}, "1"); return ok + "!"; }\n`);
+  const r = await verify({ dir: d, task: TASK, checker: { client: fake(), model: "m" }, cache: false, secondLook: false });
+  assert.ok(fs.existsSync(mark), "the new code ran");
+  assert.equal(r.verdict, "unknown", JSON.stringify(r.reasons));
+  assert.ok(r.reasons.some((x) => x.kind === "checks_flaky"), JSON.stringify(r.reasons));
+});
+
+// Windows: four extra sandboxed test runs exceed the time budget there (it errs to UNKNOWN, never READY); covered on Linux and macOS.
+test("0.3.3: changing the test script to leave out a test the change broke is NOT READY", { skip: process.platform === "win32" }, async () => {
+  const d = repo();
+  write(d, "test/other.test.js", "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\ntest(\"other\", () => { assert.equal(1, 1); });\n");
+  execFileSync("git", ["-C", d, "add", "-A"]); execFileSync("git", ["-C", d, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "more"]);
+  write(d, "src/slug.js", "export function slugify(s) { return 42; }\n");
+  const pkg = JSON.parse(fs.readFileSync(path.join(d, "package.json"), "utf8")); pkg.scripts.test = "node --test test/other.test.js"; write(d, "package.json", JSON.stringify(pkg));
+  const r = await verify({ dir: d, task: TASK, checker: null });
+  assert.equal(r.verdict, "not_ready", JSON.stringify(r.reasons));
+  assert.ok(r.reasons.some((x) => x.kind === "regression" && /original test command/.test(x.summary)), JSON.stringify(r.reasons));
+});
+
+test("0.3.3: test settings in pyproject.toml and package.json are part of the cheat scan", async () => {
+  const { detectCheats } = await import("./cheats.js");
+  const py = detectCheats([{ path: "pyproject.toml", before: "[project]\nname='x'\n[tool.pytest.ini_options]\naddopts='-q'\n", after: "[project]\nname='x'\n[tool.pytest.ini_options]\naddopts='-q --deselect tests/test_a.py::test_add'\n" }]);
+  assert.ok(py.some((c) => c.kind === "test_config_changed"), JSON.stringify(py));
+  const js = detectCheats([{ path: "package.json", before: JSON.stringify({ scripts: { test: "jest" } }), after: JSON.stringify({ scripts: { test: "jest" }, jest: { testPathIgnorePatterns: ["add"] } }) }]);
+  assert.ok(js.some((c) => c.kind === "test_config_changed"), JSON.stringify(js));
+  const same = detectCheats([{ path: "pyproject.toml", before: "[project]\nversion='1'\n", after: "[project]\nversion='2'\n" }]);
+  assert.equal(same.length, 0);
+});
+
+test("0.3.3: a plain `node --test` script with tests in test/*.js (no .test. in the name) is found and run", async () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "apex-vt-"));
+  fs.mkdirSync(path.join(d, "test"));
+  write(d, "package.json", JSON.stringify({ name: "p", type: "module", scripts: { test: "node --test" } }));
+  write(d, "test/a.js", "import { test } from \"node:test\";\ntest(\"a\", () => {});\n");
+  const { detectTestRunner } = await import("apex-verify-engine");
+  const r = await detectTestRunner(d);
+  assert.deepEqual(r?.command, ["node", "--test"]);
+});

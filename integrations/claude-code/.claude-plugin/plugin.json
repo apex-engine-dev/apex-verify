@@ -1,6 +1,6 @@
 {
   "name": "apex-verify",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Claude Code cannot say done until Apex verify proves the change: checks written from your request by an independent model, shown to fail on the old code, run with your tests.",
   "author": {
     "name": "Apex"
